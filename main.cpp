@@ -105,66 +105,66 @@ int main() {
     double dragCoefficient = 0.1;  // Koeficient odporu
     int frameNumber = 0;
 
+    // Otevření souborů pro ukládání trajektorie
     std::ofstream dataFileV2("sphere_trajectory_V2.txt");
-    if (!dataFileV2.is_open()) {
-        std::cerr << "Nepodařilo se otevřít soubor pro zápis!" << std::endl;
-        return 1;
-    }
-
     std::ofstream dataFileV1("sphere_trajectory_V1.txt");
-    if (!dataFileV2.is_open()) {
-        std::cerr << "Nepodařilo se otevřít soubor p"
-                     "ro zápis!" << std::endl;
-        return 1;
-    }
-
     std::ofstream dataFileV0("sphere_trajectory_V0.txt");
-    if (!dataFileV2.is_open()) {
+
+    if (!dataFileV2.is_open() || !dataFileV1.is_open() || !dataFileV0.is_open()) {
         std::cerr << "Nepodařilo se otevřít soubor pro zápis!" << std::endl;
         return 1;
     }
 
-    Sphere targetSphere = {{10, 0}, {0, 0}, 0.5, "Red"};  // Target sphere
-    std::vector<Sphere> spheres = {
-        {{0, 0}, {5, 10}, 0.5, "Blue"},   // First moving sphere
-        {{0, 0}, {5, 10}, 0.5, "Green"},  // Second moving sphere
-        {{0, 0}, {5, 10}, 0.5, "Yellow"}    // Third moving sphere
-    };
-    eulerStep(spheres[0], dt, dragCoefficient, computeDragSquerForce);
-    eulerStep(spheres[1], dt, dragCoefficient, computeDragForce);
-    eulerStep(spheres[2], dt, 0.0f, computeDragForce);
+    // EnTT registry
+    entt::registry registry;
 
-    while (time < 3.0) {  // Simuluj 10 sekund
-        //rungeKuttaStep(sphere1, dt, dragCoefficient, computeDragForce);
-        //eulerStep(spheres[0], dt, dragCoefficient, computeDragSquerForce);
-        //eulerStep(spheres[1], dt, dragCoefficient, computeDragForce);
-        //eulerStep(spheres[2], dt, 0.0f, computeDragForce);
-        // Každou sekundu vygeneruj POV-Ray soubor
-        if (spheres[0].position.y > 0.0f)
-        {
-            eulerStep(spheres[0], dt, dragCoefficient, computeDragSquerForce);
-            writeData(dataFileV2, spheres[0]);
+    // Vytvoření cílové koule (target)
+    auto target = registry.create();
+    registry.emplace<Sphere>(target, Vec2{10, 0}, Vec2{0, 0}, 0.5, "Red");
+
+    // Vytvoření tří koulí (projectiles)
+    auto sphere1 = registry.create();
+    registry.emplace<Sphere>(sphere1, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Blue");
+
+    auto sphere2 = registry.create();
+    registry.emplace<Sphere>(sphere2, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Green");
+
+    auto sphere3 = registry.create();
+    registry.emplace<Sphere>(sphere3, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Yellow");
+
+    // Provádíme Euler krok PŘED začátkem smyčky
+    eulerStep(registry.get<Sphere>(sphere1), dt, dragCoefficient, computeDragSquerForce);
+    eulerStep(registry.get<Sphere>(sphere2), dt, dragCoefficient, computeDragForce);
+    eulerStep(registry.get<Sphere>(sphere3), dt, 0.0f, computeDragForce);
+
+    // Simulace pohybu
+    while (time < 3.0) {  // Simulace na 3 sekundy
+        auto& targetSphere = registry.get<Sphere>(target);
+        auto& s1 = registry.get<Sphere>(sphere1);
+        auto& s2 = registry.get<Sphere>(sphere2);
+        auto& s3 = registry.get<Sphere>(sphere3);
+
+        // Euler krok pro každou kouli během simulace
+        if (s1.position.y > 0.0f) {
+            eulerStep(s1, dt, dragCoefficient, computeDragSquerForce);
+            writeData(dataFileV2, s1);
         }
-        if (spheres[1].position.y > 0.0f)
-        {
-            eulerStep(spheres[1], dt, dragCoefficient, computeDragForce);
-            writeData(dataFileV1, spheres[1]);
+        if (s2.position.y > 0.0f) {
+            eulerStep(s2, dt, dragCoefficient, computeDragForce);
+            writeData(dataFileV1, s2);
         }
-        if (spheres[2].position.y > 0.0f)
-        {
-            eulerStep(spheres[2], dt, 0.0f, computeDragForce);
-            writeData(dataFileV0, spheres[2]);
+        if (s3.position.y > 0.0f) {
+            eulerStep(s3, dt, 0.0f, computeDragForce);
+            writeData(dataFileV0, s3);
         }
 
+        // POV-Ray soubor každých 0.05 sekundy
         if (std::fmod(time, 0.05) < dt) {
+            std::vector<Sphere> spheres = { s1, s2, s3 };
             writePOVRayFile(frameNumber++, targetSphere, spheres);
         }
 
-        /*if (checkCollision(sphere1, sphere0)) {
-            std::cout << "Koule se srazily!" << std::endl;
-            break;
-        }*/
-        std::cout << time << std::endl;
+        std::cout << "Čas: " << time << std::endl;
         time += dt;
     }
 

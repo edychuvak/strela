@@ -42,37 +42,13 @@ Vec2 computeDragForce(const Vec2& velocity, double dragCoefficient) {
     return velocity * (-dragCoefficient);
 }
 
-void rungeKuttaStep(Sphere& sphere, double dt, double dragCoefficient, Vec2 (*computeDrag)(const Vec2&, double)) {
-    Vec2 k1_v = computeDrag(sphere.velocity, dragCoefficient);
-    Vec2 k1_r = sphere.velocity;
-
-    Vec2 k2_v = computeDrag(sphere.velocity + k1_v * (0.5 * dt), dragCoefficient);
-    Vec2 k2_r = sphere.velocity + k1_v * (0.5 * dt);
-
-    Vec2 k3_v = computeDrag(sphere.velocity + k2_v * (0.5 * dt), dragCoefficient);
-    Vec2 k3_r = sphere.velocity + k2_v * (0.5 * dt);
-
-    Vec2 k4_v = computeDrag(sphere.velocity + k3_v * dt, dragCoefficient);
-    Vec2 k4_r = sphere.velocity + k3_v * dt;
-
-    sphere.velocity = sphere.velocity + (k1_v + k2_v * 2 + k3_v * 2 + k4_v) * (dt / 6.0);
-    sphere.position = sphere.position + (k1_r + k2_r * 2 + k3_r * 2 + k4_r) * (dt / 6.0);
-
-    sphere.velocity.y -= g * dt;
-}
-
 void eulerStep(Sphere& sphere, double dt, double dragCoefficient, Vec2 (*computeDrag)(const Vec2&, double)) {
     Vec2 dragForce = computeDrag(sphere.velocity, dragCoefficient);
     sphere.velocity = sphere.velocity + (dragForce - Vec2{0, g}) * dt;
     sphere.position = sphere.position + sphere.velocity * dt;
 }
 
-bool checkCollision(const Sphere& sphere1, const Sphere& sphere2) {
-    double distance = (sphere1.position - sphere2.position).magnitude();
-    return distance <= (sphere1.radius + sphere2.radius);
-}
-
-void writePOVRayFile(int frameNumber, const Sphere& targetSphere, const std::vector<Sphere>& spheres) {
+void writePOVRayFile(int frameNumber, const Sphere& targetSphere, const Sphere& projectile) {
     std::ofstream file("frame_" + std::to_string(frameNumber) + ".pov");
     file << "#include \"colors.inc\"\n";
     file << "camera { location <5, 4, -11> look_at <5, 4, 0> }\n";
@@ -84,11 +60,9 @@ void writePOVRayFile(int frameNumber, const Sphere& targetSphere, const std::vec
     file << "  sphere { <" << targetSphere.position.x << ", " << targetSphere.position.y << ", 0>, "
          << targetSphere.radius << " texture { pigment { color " << targetSphere.color << " } } }\n";
 
-    // Other Spheres
-    for (const auto& sphere : spheres) {
-        file << "  sphere { <" << sphere.position.x << ", " << sphere.position.y << ", 0>, "
-             << sphere.radius << " texture { pigment { color " << sphere.color << " } } }\n";
-    }
+    // Projectile Sphere
+    file << "  sphere { <" << projectile.position.x << ", " << projectile.position.y << ", 0>, "
+         << projectile.radius << " texture { pigment { color " << projectile.color << " } } }\n";
 
     file << "}\n";  // End of the container object
 
@@ -104,13 +78,12 @@ int main() {
     double time = 0.0;     // počáteční čas
     double dragCoefficient = 0.1;  // Koeficient odporu
     int frameNumber = 0;
+    double speed = 15.0;   // Počáteční rychlost 15 m/s
 
-    // Otevření souborů pro ukládání trajektorie
-    std::ofstream dataFileV2("sphere_trajectory_V2.txt");
-    std::ofstream dataFileV1("sphere_trajectory_V1.txt");
-    std::ofstream dataFileV0("sphere_trajectory_V0.txt");
+    // Otevření souboru pro ukládání trajektorie
+    std::ofstream dataFile("sphere_trajectory.txt");
 
-    if (!dataFileV2.is_open() || !dataFileV1.is_open() || !dataFileV0.is_open()) {
+    if (!dataFile.is_open()) {
         std::cerr << "Nepodařilo se otevřít soubor pro zápis!" << std::endl;
         return 1;
     }
@@ -122,51 +95,55 @@ int main() {
     auto target = registry.create();
     registry.emplace<Sphere>(target, Vec2{10, 0}, Vec2{0, 0}, 0.5, "Red");
 
-    // Vytvoření tří koulí (projectiles)
-    auto sphere1 = registry.create();
-    registry.emplace<Sphere>(sphere1, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Blue");
+    // Vytvoření jedné střelící koule (projectile)
+    auto projectile = registry.create();
+    registry.emplace<Sphere>(projectile, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Blue");
 
-    auto sphere2 = registry.create();
-    registry.emplace<Sphere>(sphere2, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Green");
+    double maxDistance = 0.0;
+    double bestAngle = 0.0;
 
-    auto sphere3 = registry.create();
-    registry.emplace<Sphere>(sphere3, Vec2{0, 0}, Vec2{5, 10}, 0.5, "Yellow");
+    // Simulace pro různé úhly (od 30 do 60 stupňů)
+    for (double angle = 30.0; angle <= 60.0; angle += 1.0) {
+        // Převod úhlu na radiány
+        double radians = angle * M_PI / 180.0;
 
-    // Provádíme Euler krok PŘED začátkem smyčky
-    eulerStep(registry.get<Sphere>(sphere1), dt, dragCoefficient, computeDragSquerForce);
-    eulerStep(registry.get<Sphere>(sphere2), dt, dragCoefficient, computeDragForce);
-    eulerStep(registry.get<Sphere>(sphere3), dt, 0.0f, computeDragForce);
+        // Vypočítání složek rychlosti
+        double vx = speed * std::cos(radians);
+        double vy = speed * std::sin(radians);
 
-    // Simulace pohybu
-    while (time < 3.0) {  // Simulace na 3 sekundy
-        auto& targetSphere = registry.get<Sphere>(target);
-        auto& s1 = registry.get<Sphere>(sphere1);
-        auto& s2 = registry.get<Sphere>(sphere2);
-        auto& s3 = registry.get<Sphere>(sphere3);
+        // Nastavení počátečních podmínek pro střelící kouli
+        auto& projectileSphere = registry.get<Sphere>(projectile);
+        projectileSphere.position = {0, 0};  // Výchozí pozice
+        projectileSphere.velocity = {vx, vy};  // Počáteční rychlost z daného úhlu
 
-        // Euler krok pro každou kouli během simulace
-        if (s1.position.y > 0.0f) {
-            eulerStep(s1, dt, dragCoefficient, computeDragSquerForce);
-            writeData(dataFileV2, s1);
-        }
-        if (s2.position.y > 0.0f) {
-            eulerStep(s2, dt, dragCoefficient, computeDragForce);
-            writeData(dataFileV1, s2);
-        }
-        if (s3.position.y > 0.0f) {
-            eulerStep(s3, dt, 0.0f, computeDragForce);
-            writeData(dataFileV0, s3);
-        }
+        // Provádíme Euler krok před smyčkou while
+        eulerStep(projectileSphere, dt, dragCoefficient, computeDragSquerForce);
 
-        // POV-Ray soubor každých 0.05 sekundy
-        if (std::fmod(time, 0.05) < dt) {
-            std::vector<Sphere> spheres = { s1, s2, s3 };
-            writePOVRayFile(frameNumber++, targetSphere, spheres);
+        double currentDistance = 0.0;
+
+        // Reset time pro každou simulaci
+        time = 0.0;
+
+        // Simulace letu
+        while (projectileSphere.position.y > 0.0f && time < 10.0) {
+            eulerStep(projectileSphere, dt, dragCoefficient, computeDragSquerForce);
+            writeData(dataFile,projectileSphere);
+            time += dt;
         }
 
-        std::cout << "Čas: " << time << std::endl;
-        time += dt;
+        // Vypočítání vzdálenosti doletu
+        currentDistance = projectileSphere.position.x;
+
+        // Pokud je dolet pro tento úhel větší než dosud maximální, ulož ho
+        if (currentDistance > maxDistance) {
+            maxDistance = currentDistance;
+            bestAngle = angle;
+        }
+
+        std::cout << "Úhel: " << angle << " stupňů, Dolet: " << currentDistance << " metrů" << std::endl;
     }
+
+    std::cout << "Největší dolet byl dosažen při úhlu: " << bestAngle << " stupňů a dolet byl: " << maxDistance << " metrů." << std::endl;
 
     return 0;
 }
